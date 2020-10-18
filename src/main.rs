@@ -1,7 +1,12 @@
+extern crate encoding;
+
 use std::fs;
 use std::vec::Vec;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+
+use encoding::all::GBK;
+use encoding::{Encoding, EncoderTrap, DecoderTrap};
 
 // index item struct: Value(ip): 4 Bytes, Offset: 3 Bytes
 // entry item struct: Value(ip): 4 Bytes, country, area
@@ -9,6 +14,8 @@ use std::io::{Read, Seek, SeekFrom};
 const INDEX_VAL_LEN: u8 = 4;
 const INDEX_ITEM_LEN: u8 = 7;
 const ENTRY_HEADER_LEN: u8 = 4;
+const ENTRY_MODE_LEN: u8 = 1;
+const ENTRY_OFFSET_LEN: u8 = 3;
 const REDIRECT_MODE_1: u8 = 1;
 const REDIRECT_MODE_2: u8 = 2;
 const REDIRECT_OFFSET_LEN: u8 = 3;
@@ -46,7 +53,17 @@ fn main() {
     //     count += 1;
     // }
 
-    test_seek_and_read("ipv4.dat");
+    // test_seek_and_read("ipv4.dat");
+
+    // test_encoding();
+
+    let mut database = IPDatabase::new("ipv4.dat");
+    let ip_info = database.search_ip_info([114, 114, 114, 88]);
+    println!("{:?}", ip_info);
+}
+
+fn test_encoding() {
+    println!("{:?}", GBK.encode("你好，世界。", EncoderTrap::Strict));
 }
 
 #[derive(Debug)]
@@ -98,6 +115,7 @@ enum Endian {
     Be,
 }
 
+#[derive(Debug)]
 struct IPInfo {
     ip: [u8; 4],
     country: String,
@@ -153,58 +171,109 @@ impl IPDatabase {
         self.read_exact_from(&mut buf, offset);
 
         match endian {
-            Endian::Le => u32::from_le_bytes(buf),
-            Endian::Be => u32::from_be_bytes(buf),
+            Endian::Le => {
+                let _buf = [buf[0], buf[1], buf[2], 0_u8];
+                u32::from_le_bytes(_buf)
+            },
+            Endian::Be => {
+                let _buf = [0_u8, buf[0], buf[1], buf[2]];
+                u32::from_be_bytes(_buf)
+            },
         }
     }
 
-    fn read_c_string_from(&mut self, offset: u64) -> (String, u32) {
+    fn read_mode(&mut self, offset: u64) -> u8 {
+        let mut buf = [0_u8; 1];
+        self.read_exact_from(&mut buf, offset);
 
+        buf[0]
+    }
+
+    fn read_c_string_from(&mut self, offset: u64) -> (String, u64) {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut val = [0_u8; 1];
+        let mut _offset = offset;
+        self.file.seek(SeekFrom::Start(offset)).unwrap();
+
+        loop {
+            self.file.read_exact(&mut val);
+            if val[0] != 0 {
+                buf.push(val[0]);
+                _offset += 1;
+            } else {
+                break;
+            }
+        }
+
+        let string = GBK.decode(&buf, DecoderTrap::Strict).unwrap();
+
+        (string, _offset)
     }
 
     // ip: u8 array in big-endian
-    fn search_ip(&mut self, ip: [u8; 4]) -> IPInfo {
-        let entry_data_offset = (self.get_entry_offset_for_ip(ip.clone()) + ENTRY_HEADER_LEN) as u64;
-        let mut mode = [0_u8; 1];
-        self.read_exact_from(&mut mode, entry_data_offset);
+    fn search_ip_info(&mut self, ip: [u8; 4]) -> IPInfo {
+        let entry_data_offset = self.search_entry_offset(
+            ip.clone()) as u64 + ENTRY_HEADER_LEN as u64;
+        let mut mode = self.read_mode(entry_data_offset);
         let mut country: String = "".to_string();
         let mut area: String = "".to_string();
-        let mut area_offset: u32 = 0;
+        let mut redirect_offset: u64;
+        let mut area_offset: u64;
 
-        if mode[0] == REDIRECT_MODE_1 {
-            let mut redirect_offset = [0_u8; 3];
-            self.read_exact_from(&mut redirect_offset, entry_data_offset + 1);
-            let redirect_offset= u32::from_le_bytes(redirect_offset) as u64;
+        if mode == REDIRECT_MODE_1 {
+            redirect_offset = self.read_offset_to_u32(
+                entry_data_offset + ENTRY_MODE_LEN as u64, Endian::Le) as u64;
+            mode = self.read_mode(redirect_offset);
 
-            self.read_exact_from(&mut mode, redirect_offset);
-            if mode[0] == REDIRECT_MODE_2 {
-                let mut sec_redirect_offset = [0_u8; 3];
-                self.read_exact_from(&mut sec_redirect_offset, redirect_offset + 1);
-                let sec_redirect_offset = u32::from_le_bytes(sec_redirect_offset) as u64;
+            if mode == REDIRECT_MODE_2 {
+                area_offset = redirect_offset + (ENTRY_MODE_LEN + ENTRY_OFFSET_LEN) as u64;
+                redirect_offset = self.read_offset_to_u32(
+                    redirect_offset + ENTRY_MODE_LEN as u64, Endian::Le) as u64;
+                let (_country, _) = self.read_c_string_from(redirect_offset);
+                country = _country;
+                area = self.get_area(area_offset);
+            } else {
+                let res = self.read_c_string_from(redirect_offset);
+                country = res.0;
+                area_offset = res.1;
+                area = self.get_area(area_offset);
             }
-
-            (country, area_offset) = self.read_c_string_from(redirect_offset);
-            area = self.get_area(area_offset as u64);
-        } else if mode[0] == REDIRECT_MODE_2 {
-
+        } else if mode == REDIRECT_MODE_2 {
+            redirect_offset = self.read_offset_to_u32(
+                entry_data_offset + ENTRY_MODE_LEN as u64, Endian::Le) as u64;
+            let (_country, _) = self.read_c_string_from(redirect_offset);
+            country = _country;
+            area_offset = entry_data_offset + (ENTRY_MODE_LEN + ENTRY_OFFSET_LEN) as u64;
+            area = self.get_area(area_offset);
         } else {
-            (country, area_offset) = self.read_c_string_from(entry_data_offset);
-            area = self.get_area(area_offset as u64);
+            let res = self.read_c_string_from(entry_data_offset);
+            country = res.0;
+            area_offset = res.1;
+            area = self.get_area(area_offset);
         }
 
         return IPInfo {
             ip: ip.clone(),
-            country: country,
+            country,
             area,
         };
     }
 
-    fn get_area(&mut self, offset: u64) -> String {
+    /// offset: the start position storing area information
+    fn get_area(&mut self, mut offset: u64) -> String {
+        let mode = self.read_mode(offset);
 
+        if mode == REDIRECT_MODE_1 || mode == REDIRECT_MODE_2 {
+            offset = self.read_offset_to_u32(
+                offset + ENTRY_MODE_LEN as u64, Endian::Le) as u64;
+        }
+        let (area, _) = self.read_c_string_from(offset);
+
+        area
     }
 
     /// ip: u8 array in big-endian
-    fn get_entry_offset_for_ip(&mut self, ip: [u8; 4]) -> u32 {
+    fn search_entry_offset(&mut self, ip: [u8; 4]) -> u32 {
         let mut left = self.index_start_offset as u64;
         let mut right = self.index_end_offset as u64;
         let dst_ip = u32::from_be_bytes(ip);
@@ -214,7 +283,8 @@ impl IPDatabase {
             // compute mid_offset
             // left = a_1, right = a_n = a_1 + n * d
             // right - left = n * d
-            let mut mid = left + (right - left) / 2 ;
+            let mut mid = ((right - left) / INDEX_ITEM_LEN as u64) / 2;
+            mid = left + mid * INDEX_ITEM_LEN as u64;
             // get u32 ip integer from mid_offset
             let mid_ip= self.read_ip_to_u32(mid, Endian::Le);
             // end case
