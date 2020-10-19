@@ -15,7 +15,6 @@ pub fn parse_into_ipv4(val: &str) -> Option<[u8; 4]> {
             let mut res = [0_u8; 4];
 
             for index in 1..caps.len() {
-                // println!("{}-th group: {:?}, {}", index, caps.get(index).unwrap(), caps.get(index).unwrap().as_str().parse::<u8>().unwrap());
                 res[index - 1] = caps.get(index).unwrap().as_str().parse::<u8>().unwrap();
             }
             ip = Some(res);

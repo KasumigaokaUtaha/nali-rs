@@ -185,7 +185,7 @@ impl IPDatabase {
     /// offset: the start position storing area information
     fn get_area(&mut self, mut offset: u64) -> String {
         let mode = self.read_mode(offset);
-        let mut area: String;
+        let area: String;
 
         if mode == REDIRECT_MODE_1 || mode == REDIRECT_MODE_2 {
             offset = self.read_offset_to_u32(

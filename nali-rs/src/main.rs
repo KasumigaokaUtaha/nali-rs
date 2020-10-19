@@ -6,7 +6,7 @@ extern crate ipdb_parser;
 
 use std::vec::Vec;
 use clap::{App, Arg, ArgMatches};
-use ipdb_parser::{IPDatabase, IPInfo};
+use ipdb_parser::IPDatabase;
 
 fn main() {
     let matches = init();
@@ -18,14 +18,14 @@ fn main() {
             for value in values {
                 match util::parse_into_ipv4(value.trim()) {
                     Some(ip) => database.search_ip_info(ip).display(),
-                    None => panic!("`{}` is not a valid ip address!", value), // TODO consider replace panic with better one
+                    None => println!("`{}` is not a valid ip address!", value), // TODO consider replace panic with better one
                 }
             }
         },
         None => match matches.subcommand() {
-            Some(("update", update_matches)) => {},
-            Some(("dig", dig_matches)) => {},
-            Some(("nslookup", nslookup_matches)) => {},
+            Some(("update", _update_matches)) => {},
+            Some(("dig", _dig_matches)) => {},
+            Some(("nslookup", _nslookup_matches)) => {},
             _ => (),
         },
     }
