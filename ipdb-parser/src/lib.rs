@@ -1,15 +1,15 @@
 extern crate encoding;
 
-use std::fs;
 use std::vec::Vec;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
 use encoding::all::GBK;
-use encoding::{Encoding, EncoderTrap, DecoderTrap};
+use encoding::{Encoding, DecoderTrap};
 
-// index item struct: Value(ip): 4 Bytes, Offset: 3 Bytes
-// entry item struct: Value(ip): 4 Bytes, country, area
+/// index item struct: Value(ip): 4 Bytes, Offset: 3 Bytes
+///
+/// entry item struct: Value(ip): 4 Bytes, country, area
 
 const INDEX_VAL_LEN: u8 = 4;
 const INDEX_ITEM_LEN: u8 = 7;
@@ -18,97 +18,7 @@ const ENTRY_MODE_LEN: u8 = 1;
 const ENTRY_OFFSET_LEN: u8 = 3;
 const REDIRECT_MODE_1: u8 = 1;
 const REDIRECT_MODE_2: u8 = 2;
-const REDIRECT_OFFSET_LEN: u8 = 3;
-
-fn main() {
-    println!("Hello, world!");
-
-    // let ip_database = fs::read("ipv4.dat").unwrap();
-    // let mut start: [u8; 4] = [0; 4];
-    // let mut end: [u8; 4] = [0; 4];
-    //
-    // for (index, val) in ip_database[0..8].into_iter().enumerate() {
-    //     if index < 4 {
-    //         start[index] = *val;
-    //     } else {
-    //         end[index % 4] = *val;
-    //     }
-    // }
-    //
-    // let start_index = u32::from_le_bytes(start) as usize;
-    // let end_index = u32::from_le_bytes(end) as usize;
-    //
-    // // let first_entry = IndexEntry::new(&ip_database[start_index..start_index + 7]);
-    // // let second_entry = IndexEntry::new(&ip_database[start_index + 7..start_index + 14]);
-    // //
-    // // println!("first_entry: {:?}", first_entry);
-    // // println!("second_entry: {:?}", second_entry);
-    //
-    // let entry_len: usize = 7;
-    // let mut count = 0;
-    // for i in (start_index..start_index + entry_len * 20 + 1).into_iter().step_by(7) {
-    //     if i + 7 < ip_database.len() {
-    //         println!("{}-th entry: {:?}", count, IndexEntry::new(&ip_database[i..i+7]));
-    //     }
-    //     count += 1;
-    // }
-
-    // test_seek_and_read("ipv4.dat");
-
-    // test_encoding();
-
-    let mut database = IPDatabase::new("ipv4.dat");
-    let ip_info = database.search_ip_info([114, 114, 114, 88]);
-    println!("{:?}", ip_info);
-}
-
-fn test_encoding() {
-    println!("{:?}", GBK.encode("你好，世界。", EncoderTrap::Strict));
-}
-
-#[derive(Debug)]
-struct IndexEntry {
-    ip: [u8; 4],
-    offset: u32,
-}
-
-impl IndexEntry {
-    fn new(data: &[u8]) -> IndexEntry {
-        if data.len() != 7 {
-            panic!("Incorrect length of data");
-        }
-
-        let mut ip_bytes: [u8; 4] = [0; 4];
-        let mut offset_bytes: [u8; 4] = [0; 4];
-        for (index, val) in data.into_iter().enumerate() {
-            if index < 4 {
-                ip_bytes[index] = *val;
-            } else {
-                offset_bytes[index % 4 + 1] = *val;
-            }
-        }
-        let ip: [u8; 4] = u32::to_be_bytes(u32::from_le_bytes(ip_bytes));
-        let offset: u32 = u32::from_le_bytes(offset_bytes);
-
-        IndexEntry {
-            ip,
-            offset,
-        }
-    }
-}
-
-fn test_seek_and_read(path: &str) {
-    let mut file = File::open(path).unwrap();
-    let mut buffer = [0_u8; 8];
-    file.read_exact(&mut buffer).unwrap();
-    println!("First 8 Bytes: {:?}", buffer);
-    file.read_exact(&mut buffer).unwrap();
-    println!("Second 8 Bytes: {:?}", buffer);
-    let pos = file.seek(SeekFrom::Start(0)).unwrap();
-    println!("Seek to the position: {}", pos);
-    file.read_exact(&mut buffer).unwrap();
-    println!("=========\nFirst 8 Bytes: {:?}", buffer);
-}
+// const REDIRECT_OFFSET_LEN: u8 = 3;
 
 enum Endian {
     Le,
@@ -116,20 +26,20 @@ enum Endian {
 }
 
 #[derive(Debug)]
-struct IPInfo {
+pub struct IPInfo {
     ip: [u8; 4],
     country: String,
     area: String,
 }
 
-struct IPDatabase {
+pub struct IPDatabase {
     file: File,
     index_start_offset: u32,
     index_end_offset: u32,
 }
 
 impl IPDatabase {
-    fn new(path: &str) -> IPDatabase {
+    pub fn new(path: &str) -> IPDatabase {
         let mut file = File::open(path).unwrap();
         let mut index_start_offset = [0_u8; 4];
         let mut index_end_offset = [0_u8; 4];
@@ -147,7 +57,7 @@ impl IPDatabase {
         }
     }
 
-    fn read_exact_from(&mut self, mut buf: &mut [u8], offset: u64) {
+    fn read_exact_from(&mut self, buf: &mut [u8], offset: u64) {
         self.file.seek(SeekFrom::Start(offset)).unwrap();
         self.file.read_exact(buf).unwrap();
     }
@@ -196,7 +106,7 @@ impl IPDatabase {
         self.file.seek(SeekFrom::Start(offset)).unwrap();
 
         loop {
-            self.file.read_exact(&mut val);
+            self.file.read_exact(&mut val).unwrap();
             if val[0] != 0 {
                 buf.push(val[0]);
                 _offset += 1;
@@ -211,14 +121,14 @@ impl IPDatabase {
     }
 
     // ip: u8 array in big-endian
-    fn search_ip_info(&mut self, ip: [u8; 4]) -> IPInfo {
+    pub fn search_ip_info(&mut self, ip: [u8; 4]) -> IPInfo {
         let entry_data_offset = self.search_entry_offset(
             ip.clone()) as u64 + ENTRY_HEADER_LEN as u64;
         let mut mode = self.read_mode(entry_data_offset);
-        let mut country: String = "".to_string();
-        let mut area: String = "".to_string();
+        let country: String;
+        let area: String;
         let mut redirect_offset: u64;
-        let mut area_offset: u64;
+        let area_offset: u64;
 
         if mode == REDIRECT_MODE_1 {
             redirect_offset = self.read_offset_to_u32(
