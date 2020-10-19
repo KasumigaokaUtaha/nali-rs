@@ -8,4 +8,5 @@ edition = "2018"
 
 [dependencies]
 ipdb-parser = { path = "../ipdb-parser" }
-clap = "2.33.3"
+clap = "3.0.0-beta.2"
+regex = "1.4.1"

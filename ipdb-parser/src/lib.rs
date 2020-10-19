@@ -32,6 +32,14 @@ pub struct IPInfo {
     area: String,
 }
 
+impl IPInfo {
+    pub fn display(&self) {
+        println!("{}.{}.{}.{} \t \x1b[0;0;36m[{} {}]\x1b[0m",
+                 self.ip[0], self.ip[1], self.ip[2], self.ip[3], &self.country,
+                 if self.area == "" { "unknown area" } else { &self.area });
+    }
+}
+
 pub struct IPDatabase {
     file: File,
     index_start_offset: u32,
@@ -126,7 +134,7 @@ impl IPDatabase {
             ip.clone()) as u64 + ENTRY_HEADER_LEN as u64;
         let mut mode = self.read_mode(entry_data_offset);
         let country: String;
-        let area: String;
+        let mut area: String;
         let mut redirect_offset: u64;
         let area_offset: u64;
 
@@ -162,6 +170,11 @@ impl IPDatabase {
             area = self.get_area(area_offset);
         }
 
+        // remove unrelated area info
+        if area.contains("CZ88.NET") {
+            area = "".to_string();
+        }
+
         return IPInfo {
             ip: ip.clone(),
             country,
@@ -172,12 +185,18 @@ impl IPDatabase {
     /// offset: the start position storing area information
     fn get_area(&mut self, mut offset: u64) -> String {
         let mode = self.read_mode(offset);
+        let mut area: String;
 
         if mode == REDIRECT_MODE_1 || mode == REDIRECT_MODE_2 {
             offset = self.read_offset_to_u32(
                 offset + ENTRY_MODE_LEN as u64, Endian::Le) as u64;
         }
-        let (area, _) = self.read_c_string_from(offset);
+
+        if offset != 0 {
+            area = self.read_c_string_from(offset).0;
+        } else {
+            area = "unknown area".to_string();
+        }
 
         area
     }
