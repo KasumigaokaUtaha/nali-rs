@@ -1,11 +1,19 @@
 extern crate encoding;
+extern crate attohttpc;
+extern crate flate2;
+extern crate shellexpand;
 
+use std::fs;
+use std::os::unix;
 use std::vec::Vec;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+// use std::error::Error;
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use encoding::all::GBK;
 use encoding::{Encoding, DecoderTrap};
+use flate2::read::ZlibDecoder;
 
 /// index item struct: Value(ip): 4 Bytes, Offset: 3 Bytes
 ///
@@ -19,13 +27,16 @@ const ENTRY_OFFSET_LEN: u8 = 3;
 const REDIRECT_MODE_1: u8 = 1;
 const REDIRECT_MODE_2: u8 = 2;
 // const REDIRECT_OFFSET_LEN: u8 = 3;
+const QQWRY_IP_DATABASE_URL: &str = "https://qqwry.mirror.noc.one/qqwry.rar";
+const QQWRY_IP_DATABASE_KEY_URL: &str = "https://qqwry.mirror.noc.one/copywrite.rar";
+const QQWRY_IP_DATABASE_NAME: &str = "qqwry.db";
+const DEFAULT_DIR: &str = "~/.nali-rs";
 
 enum Endian {
     Le,
     Be,
 }
 
-#[derive(Debug)]
 pub struct IPInfo {
     ip: [u8; 4],
     country: String,
@@ -47,8 +58,15 @@ pub struct IPDatabase {
 }
 
 impl IPDatabase {
-    pub fn new(path: &str) -> IPDatabase {
-        let mut file = File::open(path).unwrap();
+    /// dir_path: path to the directory in which IP database is stored
+    /// this directory will be created if not exist
+    pub fn new() -> IPDatabase {
+        let default_dir: &str = &shellexpand::tilde(DEFAULT_DIR).to_owned();
+        if !IPDatabase::exists_database() { IPDatabase::update(default_dir); }
+        let mut file = File::open(
+            Path::new(default_dir).join(QQWRY_IP_DATABASE_NAME)
+        ).unwrap();
+
         let mut index_start_offset = [0_u8; 4];
         let mut index_end_offset = [0_u8; 4];
 
@@ -237,5 +255,98 @@ impl IPDatabase {
         }
 
         res
+    }
+
+    fn exists_database() -> bool {
+        let default_dir: &str = &shellexpand::tilde(DEFAULT_DIR).to_owned();
+        let default_dir: &Path = Path::new(default_dir);
+        if default_dir.exists() {
+            default_dir.join(QQWRY_IP_DATABASE_NAME).exists()
+        } else {
+            false
+        }
+    }
+
+    /// Update the existing IP database
+    /// or create it if not exist
+    pub fn update(dir: &str) {
+        let dir_path = fs::canonicalize(dir).unwrap();
+        IPDatabase::update_or_create(dir_path.as_path());
+    }
+
+    /// dir: the canonical path of a given dir
+    fn update_or_create(dir: &Path) {
+        IPDatabase::remove_database();
+        IPDatabase::create_database(dir);
+    }
+
+    fn remove_database() {
+        let default_dir: &str = &shellexpand::tilde(DEFAULT_DIR).to_owned();
+        let default_dir: &Path = Path::new(default_dir);
+        if default_dir.exists() {
+            let default_db = default_dir.join(QQWRY_IP_DATABASE_NAME);
+            let default_db_meta = default_db.symlink_metadata().unwrap();
+            let is_file = default_db_meta.file_type().is_file();
+            let is_symlink = default_db_meta.file_type().is_symlink();
+            if  is_file || is_symlink {
+                if is_symlink {
+                    fs::remove_file(default_db.canonicalize().unwrap()).unwrap();
+                    println!("Successfully removed previous IP database");
+                    fs::remove_file(default_db).unwrap();
+                    println!("Successfully removed symbolic link to previous IP database");
+                } else {
+                    fs::remove_file(default_db).unwrap();
+                    println!("Successfully removed previous IP database");
+                }
+            }
+        }
+    }
+
+    fn create_database(dir: &Path) {
+        let default_dir: &str = &shellexpand::tilde(DEFAULT_DIR).to_owned();
+        let default_dir: &Path = Path::new(default_dir);
+        if !default_dir.exists() {
+            fs::create_dir(default_dir).unwrap();
+        }
+
+        let resp = attohttpc::get(QQWRY_IP_DATABASE_URL).send().unwrap();
+        let raw_db = resp.bytes().unwrap();
+        let key = IPDatabase::get_key(QQWRY_IP_DATABASE_KEY_URL);
+        let db = IPDatabase::decrypt_database(raw_db, key);
+
+        let mut f = File::create(dir.join(QQWRY_IP_DATABASE_NAME)).unwrap();
+        f.write_all(& db).unwrap();
+
+        println!("Successfully updated/created IP database");
+
+        if default_dir != dir {
+            unix::fs::symlink(
+                dir.join(QQWRY_IP_DATABASE_NAME),
+                default_dir.join(QQWRY_IP_DATABASE_NAME)
+            ).unwrap();
+        }
+    }
+
+    fn decrypt_database(mut raw: Vec<u8>, mut key: u32) -> Vec<u8> {
+        for i in 0..0x200 {
+            key = key * 0x805;
+            key += 1;
+            key = key & 0xff;
+
+            raw[i] = raw[i] ^ key as u8;
+        }
+
+        let mut decoder = ZlibDecoder::new(&raw[..]);
+        let mut buf: Vec<u8> = Vec::new();
+        decoder.read_to_end(&mut buf).unwrap();
+
+        buf
+    }
+
+    fn get_key(key_url: &str) -> u32 {
+        let resp = attohttpc::get(key_url).send().unwrap();
+        let body = resp.bytes().unwrap();
+
+        u32::from_le_bytes([body[20], body[21], body[22], body[23]])
     }
 }

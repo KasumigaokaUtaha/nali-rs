@@ -8,3 +8,6 @@ edition = "2018"
 
 [dependencies]
 encoding = "0.2.33"
+attohttpc = "0.16.0"
+flate2 = "1.0.18"
+shellexpand = "2.0.0"
