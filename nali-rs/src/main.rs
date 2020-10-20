@@ -39,9 +39,7 @@ fn main() {
 }
 
 fn init() -> ArgMatches {
-    App::new("nali-rs")
-        .version("0.2")
-        // .author("Silver Crow <kasumigaokautahasaki@gmail.com>")
+    App::new("nali-rs")      
         .about("A simple utility for querying geo info about ip address(es)")
         .arg(
             Arg::new("IP-Addr")
