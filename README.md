@@ -3,7 +3,12 @@
 A simple CLI utility for querying IP addresses.
 
 ## Build
-Run `cargo build` in the project root to build the executable file.
+Run the following command to install the nali-rs utility:
+
+```bash
+$ cd nali-rs
+$ cargo install --path ./nali-rs
+```
 
 ## Usage
 ### Query IP address
