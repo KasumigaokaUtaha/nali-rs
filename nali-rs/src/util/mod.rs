@@ -1,25 +1,97 @@
+use std::collections::HashMap;
+use std::io::{self, Read};
+use std::net::{AddrParseError, IpAddr, Ipv4Addr};
+use std::str::FromStr;
+
+use clap::{App, Arg, ArgMatches};
 use regex::Regex;
 
-pub fn parse_into_ipv4(val: &str) -> Option<[u8; 4]> {
-    let mut re_str = String::from(r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)");
-    for _ in 0..3 {
-        re_str.push_str(r"(?:\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d))");
-    }
-    re_str.push('$');
-    let re = Regex::new(&re_str).unwrap();
-    let mut ip: Option<[u8; 4]> = None;
+use ipdb_parser::IPDatabase;
+
+pub fn parse_into_ipv4(val: &str) -> Option<Result<Ipv4Addr, AddrParseError>> {
+    let ipv4_pattern = r"^((?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3})$";
+    let re = Regex::new(ipv4_pattern).unwrap();
 
     if re.is_match(val) {
-        let caps = re.captures(val).unwrap();
-        if caps.len() - 1 == 4 {
-            let mut res = [0_u8; 4];
+        Some(Ipv4Addr::from_str(val))
+    } else {
+        None
+    }
+}
 
-            for index in 1..caps.len() {
-                res[index - 1] = caps.get(index).unwrap().as_str().parse::<u8>().unwrap();
+pub fn parse_into_ipv4s(val: &str) -> Option<Vec<Result<Ipv4Addr, AddrParseError>>> {
+    let ipv4_pattern = r"((?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3})";
+    let re = Regex::new(ipv4_pattern).unwrap();
+
+    if re.is_match(val) {
+        let mut res: Vec<Result<Ipv4Addr, AddrParseError>> = Vec::new();
+        for cap in re.captures_iter(val) {
+            if let Some(matched_value) = cap.get(0) {
+                res.push(Ipv4Addr::from_str(matched_value.as_str()));
             }
-            ip = Some(res);
         }
+
+        Some(res)
+    } else {
+        None
+    }
+}
+
+pub fn parse_and_search_ip_in<T: Read>(mut reader: T) -> String {
+    let mut map: HashMap<Ipv4Addr, String> = HashMap::new();
+    let mut database = IPDatabase::new();
+    let mut buf = String::new();
+    reader.read_to_string(&mut buf).unwrap();
+
+    match parse_into_ipv4s(&buf) {
+        Some(values) => {
+            for value in values {
+                match value {
+                    Ok(ip) => {
+                        map.insert(ip, database.search_ip_info(IpAddr::V4(ip)).to_string());
+                    }
+                    Err(err) => println!("Error: {}", err)
+                }
+            }
+        }
+        None => {}
     }
 
-    ip
+    for (ip, ip_info) in map {
+        buf = buf.replace(&ip.to_string(), &ip_info);
+    }
+
+    buf
+}
+
+pub fn init() -> ArgMatches {
+    App::new("nali-rs")
+        .about("A simple utility for querying geo info about ip address(es)")
+        .arg(
+            Arg::new("IP-Addr")
+                .about("IP address(es) to be queried")
+                // .required(true)
+                .multiple(true)
+                .index(1)
+        )
+        .subcommand(
+            App::new("update")
+                .about("Update ip database(s)")
+                .arg(
+                    Arg::new("Path")
+                        .about("Directory path in which IP database will be stored")
+                        .short('p')
+                        .long("path")
+                        .takes_value(true)
+                )
+        )
+        .subcommand(
+            App::new("dig")
+                .about("to be implemented")
+        )
+        .subcommand(
+            App::new("nslookup")
+                .about("to be implemented")
+        )
+        .get_matches()
 }

@@ -1,18 +1,18 @@
-extern crate encoding;
 extern crate attohttpc;
+extern crate encoding;
 extern crate flate2;
 extern crate shellexpand;
 
 use std::fs;
-use std::os::unix;
-use std::vec::Vec;
 use std::fs::File;
-use std::path::Path;
-// use std::error::Error;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::net::{IpAddr, Ipv4Addr};
+use std::os::unix;
+use std::path::Path;
+use std::vec::Vec;
 
+use encoding::{DecoderTrap, Encoding};
 use encoding::all::GBK;
-use encoding::{Encoding, DecoderTrap};
 use flate2::read::ZlibDecoder;
 
 /// index item struct: Value(ip): 4 Bytes, Offset: 3 Bytes
@@ -38,16 +38,19 @@ enum Endian {
 }
 
 pub struct IPInfo {
-    ip: [u8; 4],
+    ip: IpAddr,
     country: String,
     area: String,
 }
 
 impl IPInfo {
     pub fn display(&self) {
-        println!("{}.{}.{}.{} \t \x1b[0;0;36m[{} {}]\x1b[0m",
-                 self.ip[0], self.ip[1], self.ip[2], self.ip[3], &self.country,
-                 if self.area == "" { "unknown area" } else { &self.area });
+        println!("{}", self.to_string());
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("{} \t \x1b[0;0;36m[{} {}]\x1b[0m", self.ip.to_string(), &self.country,
+                if self.area == "" { "unknown area" } else { &self.area })
     }
 }
 
@@ -62,7 +65,7 @@ impl IPDatabase {
     /// this directory will be created if not exist
     pub fn new() -> IPDatabase {
         let default_dir: &str = &shellexpand::tilde(DEFAULT_DIR).to_owned();
-        if !IPDatabase::exists_database() { IPDatabase::update(default_dir); }
+        if !IPDatabase::exists_database() { IPDatabase::update(Some(default_dir)); }
         let mut file = File::open(
             Path::new(default_dir).join(QQWRY_IP_DATABASE_NAME)
         ).unwrap();
@@ -88,15 +91,17 @@ impl IPDatabase {
         self.file.read_exact(buf).unwrap();
     }
 
-    /// read four bytes start from the given offset
-    /// and convert it to u32 which represents the integer value of an IP address
-    fn read_ip_to_u32(&mut self, offset: u64, endian: Endian) -> u32 {
+    fn read_ipv4_from(&mut self, offset: u64, endian: Endian) -> Ipv4Addr {
         let mut buf = [0_u8; 4];
         self.read_exact_from(&mut buf, offset);
 
         match endian {
-            Endian::Le => u32::from_le_bytes(buf),
-            Endian::Be => u32::from_be_bytes(buf),
+            Endian::Le => {
+                Ipv4Addr::new(buf[3], buf[2], buf[1], buf[0])
+            }
+            Endian::Be => {
+                Ipv4Addr::new(buf[0], buf[1], buf[2], buf[3])
+            }
         }
     }
 
@@ -110,11 +115,11 @@ impl IPDatabase {
             Endian::Le => {
                 let _buf = [buf[0], buf[1], buf[2], 0_u8];
                 u32::from_le_bytes(_buf)
-            },
+            }
             Endian::Be => {
                 let _buf = [0_u8, buf[0], buf[1], buf[2]];
                 u32::from_be_bytes(_buf)
-            },
+            }
         }
     }
 
@@ -147,9 +152,16 @@ impl IPDatabase {
     }
 
     // ip: u8 array in big-endian
-    pub fn search_ip_info(&mut self, ip: [u8; 4]) -> IPInfo {
-        let entry_data_offset = self.search_entry_offset(
-            ip.clone()) as u64 + ENTRY_HEADER_LEN as u64;
+    pub fn search_ip_info(&mut self, ip: IpAddr) -> IPInfo {
+        match ip {
+            IpAddr::V4(v4_addr) => { self.search_ipv4_info(v4_addr) }
+            IpAddr::V6(_) => panic!("Ipv6 is not implemented yet"),
+        }
+    }
+
+    fn search_ipv4_info(&mut self, ip: Ipv4Addr) -> IPInfo {
+        let entry_data_offset = self.search_entry_offset(ip.clone()) as u64
+            + ENTRY_HEADER_LEN as u64;
         let mut mode = self.read_mode(entry_data_offset);
         let country: String;
         let mut area: String;
@@ -194,11 +206,15 @@ impl IPDatabase {
         }
 
         return IPInfo {
-            ip: ip.clone(),
+            ip: IpAddr::V4(ip),
             country,
             area,
         };
     }
+
+    // fn search_ipv6_info(&mut self, ip: Ipv6Addr) -> IPInfo {
+    //
+    // }
 
     /// offset: the start position storing area information
     fn get_area(&mut self, mut offset: u64) -> String {
@@ -219,11 +235,9 @@ impl IPDatabase {
         area
     }
 
-    /// ip: u8 array in big-endian
-    fn search_entry_offset(&mut self, ip: [u8; 4]) -> u32 {
+    fn search_entry_offset(&mut self, dst_ip: Ipv4Addr) -> u32 {
         let mut left = self.index_start_offset as u64;
         let mut right = self.index_end_offset as u64;
-        let dst_ip = u32::from_be_bytes(ip);
         let res: u32;
 
         loop {
@@ -233,10 +247,10 @@ impl IPDatabase {
             let mut mid = ((right - left) / INDEX_ITEM_LEN as u64) / 2;
             mid = left + mid * INDEX_ITEM_LEN as u64;
             // get u32 ip integer from mid_offset
-            let mid_ip= self.read_ip_to_u32(mid, Endian::Le);
+            let mid_ip = self.read_ipv4_from(mid, Endian::Le);
             // end case
             if right - left == INDEX_ITEM_LEN as u64 {
-                if dst_ip < self.read_ip_to_u32(right, Endian::Le) {
+                if dst_ip < self.read_ipv4_from(right, Endian::Le) {
                     res = self.read_offset_to_u32(left + INDEX_VAL_LEN as u64, Endian::Le);
                 } else {
                     res = self.read_offset_to_u32(right + INDEX_VAL_LEN as u64, Endian::Le)
@@ -249,7 +263,7 @@ impl IPDatabase {
             } else if dst_ip > mid_ip {
                 left = mid
             } else {
-                res =  self.read_offset_to_u32(mid + INDEX_VAL_LEN as u64, Endian::Le);
+                res = self.read_offset_to_u32(mid + INDEX_VAL_LEN as u64, Endian::Le);
                 break;
             }
         }
@@ -269,8 +283,10 @@ impl IPDatabase {
 
     /// Update the existing IP database
     /// or create it if not exist
-    pub fn update(dir: &str) {
-        let dir_path = fs::canonicalize(dir).unwrap();
+    pub fn update(dir: Option<&str>) {
+        let dir_path = fs::canonicalize(
+            dir.unwrap_or(&shellexpand::tilde(DEFAULT_DIR).to_owned())
+        ).unwrap();
         IPDatabase::update_or_create(dir_path.as_path());
     }
 
@@ -288,7 +304,7 @@ impl IPDatabase {
             let default_db_meta = default_db.symlink_metadata().unwrap();
             let is_file = default_db_meta.file_type().is_file();
             let is_symlink = default_db_meta.file_type().is_symlink();
-            if  is_file || is_symlink {
+            if is_file || is_symlink {
                 if is_symlink {
                     fs::remove_file(default_db.canonicalize().unwrap()).unwrap();
                     println!("Successfully removed previous IP database");
@@ -315,14 +331,14 @@ impl IPDatabase {
         let db = IPDatabase::decrypt_database(raw_db, key);
 
         let mut f = File::create(dir.join(QQWRY_IP_DATABASE_NAME)).unwrap();
-        f.write_all(& db).unwrap();
+        f.write_all(&db).unwrap();
 
         println!("Successfully updated/created IP database");
 
         if default_dir != dir {
             unix::fs::symlink(
                 dir.join(QQWRY_IP_DATABASE_NAME),
-                default_dir.join(QQWRY_IP_DATABASE_NAME)
+                default_dir.join(QQWRY_IP_DATABASE_NAME),
             ).unwrap();
         }
     }
