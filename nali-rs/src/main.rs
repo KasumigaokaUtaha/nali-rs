@@ -2,6 +2,7 @@ extern crate clap;
 extern crate ipdb_parser;
 extern crate regex;
 
+use std::io::{self, BufReader};
 use std::net::IpAddr;
 use std::vec::Vec;
 
@@ -31,18 +32,21 @@ fn main() {
         }
         None => match matches.subcommand() {
             Some(subcommand) => match subcommand {
-                ("update", update_matches) => {
-                    match update_matches.value_of("Path") {
-                        Some(dir_path) => IPDatabase::update(Some(dir_path)),
-                        None => IPDatabase::update(None),
-                    }
-                }
-                ("dig", _dig_matches) => {}
-                ("nslookup", _nslookup_matches) => {}
-                (name, _) => { println!("Undefined subcommand `{}`", name) }
+                ("update", update_matches) => match update_matches.value_of("Path") {
+                    Some(dir_path) => IPDatabase::update(Some(dir_path)),
+                    None => IPDatabase::update(None),
+                },
+                (name, _) => println!("Undefined subcommand `{}`", name),
             },
             None => {
-                print!("{}", util::parse_and_search_ip_in(std::io::stdin()));
+                let mut buf_stdin = BufReader::new(io::stdin());
+                loop {
+                    let output = util::parse_and_search_ip(&mut buf_stdin);
+                    match output {
+                        Some(value) => print!("{}", value),
+                        None => break,
+                    }
+                }
             }
         },
     }
